@@ -1,0 +1,18 @@
+# Signing material must never be committed
+*.p12
+*.jks
+*.keystore
+*.pem
+*.key
+*.b64
+*.secret
+
+# Local APK builds and intermediate files
+*.apk
+*.aab
+*.unsigned
+*.report.json
+*.out.json
+__pycache__/
+*.pyc
+.env*

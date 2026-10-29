@@ -1,0 +1,147 @@
+name: Check upstream Zona and build NoVAST
+
+on:
+  schedule:
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_url:
+        description: 'Official Zona APK URL (optional)'
+        required: false
+        default: 'https://zon.im/a'
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zona-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${ github.token }}
+    steps:
+      - name: Checkout the build scripts
+        uses: actions/checkout@v4
+      - name: Install Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Java for Android v1 signing
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install cryptography
+        run: python -m pip install --no-cache-dir 'cryptography>=42,<47'
+      - name: Fetch the official Android APK
+        env:
+          CUSTOM_URL: ${ inputs.upstream_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="${CUSTOM_URL:-https://zon.im/a}"
+          curl --fail --location --retry 2 --max-time 300 --proto '=https' --proto-redir '=https' -- "$url" --output upstream.apk
+          test "$(wc -c < upstream.apk)" -gt 10000000
+      - name: Inspect official signature and version
+        id: inspect
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from zona_build import manifest_info, signing_certificate_digest, OFFICIAL_SIGNER
+          import os, re
+          info = manifest_info('upstream.apk')
+          assert info['package'] == 'mobi.zona', 'Wrong package'
+          assert signing_certificate_digest('upstream.apk') == OFFICIAL_SIGNER, 'Official signature changed'
+          name = str(info['versionName'])
+          code = int(info['versionCode'])
+          assert re.fullmatch(r'\d+(?:\.\d+){1,4}', name), 'Unexpected version name'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              print('version_name=' + name, file=f)
+              print('version_code=' + str(code), file=f)
+          print('Original Zona', name, 'versionCode', code)
+          PY
+          version="$(python -c "from zona_build import manifest_info; print(manifest_info('upstream.apk')['versionCode'])")"
+          if gh release view "zona-$version" >/dev/null 2>&1; then
+            echo 'already=true' >> "$GITHUB_OUTPUT"
+            echo 'Version already published.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'already=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check required encrypted signing secrets
+        id: keys
+        env:
+          KEY_BASE64: ${ secrets.ZONA_SIGNING_P12_B64 }}
+          KEY_PASSWORD: ${ secrets.ZONA_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -n "$KEY_BASE64" && -n "$KEY_PASSWORD" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Signing secrets not configured. No APK has been published.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Decode signing key in temporary runner
+        if: steps.inspect.outputs.already == 'false' && steps.keys.outputs.ready == 'true'
+        env:
+          KEY_BASE64: ${ secrets.ZONA_SIGNING_P12_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEY_BASE64" | base64 -d > signing.p12
+          chmod 600 signing.p12
+      - name: Patch, v1+v2 sign, and verify
+        if: steps.inspect.outputs.already == 'false' && steps.keys.outputs.ready == 'true'
+        env:
+          ZONA_KEY_PASSWORD: ${ secrets.ZONA_KEY_PASSWORD }}
+          VERSION_NAME: ${ steps.inspect.outputs.version_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python zona_build.py upstream.apk --key signing.p12 --out "Zona_${VERSION_NAME}_NoVAST.apk"
+      - name: Release signed APK and publish update manifest
+        if: steps.inspect.outputs.already == 'false' && steps.keys.outputs.ready == 'true'
+        env:
+          VERSION_NAME: ${ steps.inspect.outputs.version_name }}
+          VERSION_CODE: ${ steps.inspect.outputs.version_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="Zona_${VERSION_NAME}_NoVAST.apk"
+          gh release create "zona-${VERSION_CODE}" "$file" "${file}.json" \
+            --title "Zona ${VERSION_NAME} NoVAST (experimental)" \
+            --notes 'Derived from officially signed Zona; only the verified VAST patch was applied. Actual Android TV playback, ad suppression and in-app updater have not been runtime-tested.'
+          python - <<'PY'
+          import json, os
+          name = os.environ['VERSION_NAME']; code = int(os.environ['VERSION_CODE'])
+          file = f'Zona_{name}_NoVAST.apk'
+          report = json.load(open(file+'.json', encoding='utf-8'))
+          record = {
+              'package': 'mobi.zona',
+              'appVersion': name,
+              'versionCode': code,
+              'apkUrl': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/zona-{code}/{file}',
+              'sha256': report['sha256'],
+              'signingCertificateSha256': report['signingCertificate'],
+              'experimental': True,
+              'requiresUserConfirmation': True
+          }
+          os.makedirs('updates', exist_ok=True)
+          with open('updates/latest.json', 'w', encoding='utf-8') as f:
+              json.dump(record, f, ensure_ascii=False, indent=2)
+          PY
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'github-actions[bot]'
+          git add updates/latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish Zona ${VERSION_NAME} release metadata"
+            git push origin HEAD:main
+          fi
+      - name: Remove signing key and downloaded APK
+        if: always()
+        shell: bash
+        run: rm -f signing.p12 upstream.apk

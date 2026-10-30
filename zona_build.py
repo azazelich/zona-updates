@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import zipfile
 import zlib
+import xml.etree.ElementTree as ET
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
@@ -218,7 +219,58 @@ def android_tool(name):
     raise ValueError(name + ' missing: install Android SDK build-tools before signing')
 
 
-def build(original, output, keyfile, password, restore_original=False):
+
+# Experimental method derived from comparing FreeZona's no-media VAST response.
+# A valid VAST without MediaFiles is different from returning an empty string.
+# This is an UNTESTED candidate; do not select it in automated production releases.
+NO_MEDIA_VAST_XML = (
+    '<VAST version="3.0"><Ad id="1"><InLine><AdSystem>Zona</AdSystem>'
+    '<AdTitle>No ad</AdTitle><Creatives><Creative id="1" sequence="1">'
+    '<Linear><TrackingEvents/></Linear></Creative></Creatives></InLine></Ad>'
+    '<Error/></VAST>'
+)
+
+
+def patch_valid_no_media_vast(raw):
+    """Strict bytecode/string check for exactly Zona Android 3.0.76."""
+    positions, first_string = method_location(raw)
+    if not positions:
+        return None
+    if len(positions) != 1 or first_string != '':
+        raise ValueError('Unexpected VAST method layout')
+    offset, size, registers, code = positions[0]
+    if size != 3 or registers < 1 or code != EXPECTED_CODE:
+        raise ValueError('Unexpected original VAST method; patch refused')
+
+    fixture_prefix = b'<VAST version="3.0">\n<Ad id="w" sequence="1"><Wrapper fallbackOnNoAd="true">'
+    matches = []
+    string_count, string_off = struct.unpack_from('<II', raw, 56)
+    for idx in range(string_count):
+        pos = struct.unpack_from('<I', raw, string_off + 4 * idx)[0]
+        if raw[pos:pos+2] == b'\xe0\x0b' and raw[pos+2:pos+2+len(fixture_prefix)] == fixture_prefix:
+            matches.append((idx, pos))
+    if len(matches) != 1:
+        raise ValueError('Expected exactly one 1504-character VAST fixture')
+    index, pos = matches[0]
+    original_end = pos + 2 + 1504
+    if raw[original_end] != 0 or index > 65535:
+        raise ValueError('Unexpected original DEX string layout')
+
+    ET.fromstring(NO_MEDIA_VAST_XML)
+    assert '<MediaFile' not in NO_MEDIA_VAST_XML
+    xml_bytes = NO_MEDIA_VAST_XML.encode('utf-8')
+    assert len(xml_bytes) < 1504
+    rewritten = bytearray(raw)
+    # Keep UTF-8 and UTF-16 lengths IDENTICAL, preserving all DEX offsets.
+    rewritten[pos+2:original_end] = xml_bytes.ljust(1504, b' ')
+    rewritten[offset+16:offset+22] = b'\x1a\x00' + struct.pack('<H', index) + b'\x11\x00'
+    rewritten[12:32] = hashlib.sha1(rewritten[32:]).digest()
+    struct.pack_into('<I', rewritten, 8, zlib.adler32(rewritten[12:]) & 0xffffffff)
+    return bytes(rewritten)
+
+def build(original, output, keyfile, password, restore_original=False, test_no_media_vast=False):
+    if restore_original and test_no_media_vast:
+        raise ValueError('Choose one mode')
     info = manifest_info(original)
     if info.get('package') != 'mobi.zona':
         raise ValueError('Unexpected package name')
@@ -242,7 +294,13 @@ def build(original, output, keyfile, password, restore_original=False):
                 if name.startswith('META-INF/') and (name.upper() == 'META-INF/MANIFEST.MF' or name.upper().endswith(('.SF', '.RSA', '.DSA', '.EC')) or name.upper().split('/')[-1].startswith('SIG-')):
                     continue
                 raw = zin.read(name)
-                if not restore_original and name.startswith('classes') and name.endswith('.dex'):
+                if test_no_media_vast and name.startswith('classes') and name.endswith('.dex'):
+                    replacement = patch_valid_no_media_vast(raw)
+                    if replacement is not None:
+                        raw = replacement
+                        patch_count += 1
+                        patched = name
+                elif not restore_original and name.startswith('classes') and name.endswith('.dex'):
                     positions, first_string = method_location(raw)
                     if positions:
                         if len(positions) != 1 or first_string != '':
@@ -286,7 +344,7 @@ def build(original, output, keyfile, password, restore_original=False):
         if changed != expected_changes:
             raise ValueError('Unexpected modifications: ' + repr(changed))
     return dict(package=info['package'], versionCode=info['versionCode'], versionName=info['versionName'],
-                mode='original-recovery-with-ads' if restore_original else 'experimental-no-vast',
+                mode='original-recovery-with-ads' if restore_original else ('no-media-vast-test-UNVERIFIED' if test_no_media_vast else 'broken-empty-string-no-vast'),
                 modified=patched, sha256=hashlib.sha256(Path(output).read_bytes()).hexdigest(),
                 signingCertificate=CUSTOM_SIGNER, checks='v1+v2 signature via apksigner, zipalign, ZIP, code-diff, package OK',
                 runtimeTested=False, updateClientWired=False)
@@ -298,11 +356,12 @@ def main():
     ap.add_argument('--key', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--restore-original', action='store_true', help='Sign unmodified original app code to recover playback without clearing data')
+    ap.add_argument('--test-no-media-vast', action='store_true', help='Experimental proper no-media VAST XML instead of broken empty response; needs real TV test')
     args = ap.parse_args()
     password = os.getenv('ZONA_KEY_PASSWORD')
     if not password:
         ap.error('Missing ZONA_KEY_PASSWORD')
-    results = build(args.original, args.out, args.key, password, restore_original=args.restore_original)
+    results = build(args.original, args.out, args.key, password, restore_original=args.restore_original, test_no_media_vast=args.test_no_media_vast)
     Path(args.out + '.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(results, ensure_ascii=False, indent=2))
 

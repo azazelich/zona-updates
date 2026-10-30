@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import struct
 import subprocess
@@ -201,6 +202,22 @@ def signed_v2_data(data, cert_der, key):
     return out
 
 
+def android_tool(name):
+    """Find Android build tools; never publish a ZIP that was not aligned."""
+    override = os.environ.get('ZONA_' + name.upper())
+    if override:
+        return override
+    direct = shutil.which(name)
+    if direct:
+        return direct
+    for root in (os.environ.get('ANDROID_HOME'), os.environ.get('ANDROID_SDK_ROOT')):
+        if root:
+            matches = sorted((Path(root) / 'build-tools').glob('*/' + name))
+            if matches:
+                return str(matches[-1])
+    raise ValueError(name + ' missing: install Android SDK build-tools before signing')
+
+
 def build(original, output, keyfile, password):
     info = manifest_info(original)
     if info.get('package') != 'mobi.zona':
@@ -216,6 +233,7 @@ def build(original, output, keyfile, password):
     with tempfile.TemporaryDirectory() as tmp:
         unsigned = Path(tmp, 'unsigned.apk')
         v1 = Path(tmp, 'v1.apk')
+        aligned = Path(tmp, 'aligned.apk')
         patch_count = 0
         patched = None
         with zipfile.ZipFile(original) as zin, zipfile.ZipFile(unsigned, 'w') as zout:
@@ -250,8 +268,14 @@ def build(original, output, keyfile, password):
         env['ZONA_KEY_PASSWORD'] = password
         subprocess.run(cmd, check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         subprocess.run(['jarsigner', '-verify', str(v1)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        Path(output).write_bytes(signed_v2_data(v1.read_bytes(), cert_der, key))
+        zipalign = android_tool('zipalign')
+        subprocess.run([zipalign, '-f', '4', str(v1), str(aligned)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run([zipalign, '-c', '4', str(aligned)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # v2 signing must happen AFTER zipalign; otherwise ZIP changes invalidate v2.
+        Path(output).write_bytes(signed_v2_data(aligned.read_bytes(), cert_der, key))
     subprocess.run(['jarsigner', '-verify', str(output)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run([android_tool('apksigner'), 'verify', '--verbose', str(output)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run([android_tool('zipalign'), '-c', '4', str(output)], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if signing_certificate_digest(output) != CUSTOM_SIGNER:
         raise ValueError('Output certificate mismatch')
     with zipfile.ZipFile(original) as src, zipfile.ZipFile(output) as dest:
@@ -262,7 +286,7 @@ def build(original, output, keyfile, password):
             raise ValueError('Unexpected modifications: ' + repr(changed))
     return dict(package=info['package'], versionCode=info['versionCode'], versionName=info['versionName'],
                 modified=patched, sha256=hashlib.sha256(Path(output).read_bytes()).hexdigest(),
-                signingCertificate=CUSTOM_SIGNER, checks='v1 signature, v2 digest, ZIP, code-diff, package OK',
+                signingCertificate=CUSTOM_SIGNER, checks='v1+v2 signature via apksigner, zipalign, ZIP, code-diff, package OK',
                 runtimeTested=False, updateClientWired=False)
 
 

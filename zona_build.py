@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.hazmat.primitives.asymmetric import padding
 
 OFFICIAL_SIGNER = 'e85c1eb707f4c7987e51886a8b8eee159c4256aabfcca179626cd04aac4aa989'
-CUSTOM_SIGNER = '774d302a6322f9ba5ef1aca6f0e858668483a8d6ef5acc6873f39d17a54bcc9d'
+CUSTOM_SIGNER = '1ae0e98bbf5c2206fa537593f15170d614419be68e7029c70cac7d18754ae8b1'
 AD_METHOD = ('Lmobi/zona/data/model/response/VastResponse;', 'getVast', '()Ljava/lang/String;')
 EXPECTED_CODE = bytes.fromhex('5410414c1100')
 NEW_CODE = bytes.fromhex('1a0000001100')

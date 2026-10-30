@@ -43,9 +43,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="${CUSTOM_URL:-https://zon.im/a}"
-          curl --fail --location --retry 2 --max-time 300 --proto '=https' --proto-redir '=https' -- "$url" --output upstream.apk
-          test "$(wc -c < upstream.apk)" -gt 10000000
+          # Both URLs are documented by the official Zona Android website.
+          # Verify the developer's APK signature in the following step.
+          urls=()
+          if [[ -n "${CUSTOM_URL:-}" ]]; then
+            urls+=("$CUSTOM_URL")
+          fi
+          urls+=("https://apkr.upzona.net/zona2.apk" "https://zon.im/a")
+          fetched=false
+          for url in "${urls[@]}"; do
+            echo "Attempting official source: $url"
+            rm -f upstream.apk
+            if curl --fail --location --silent --show-error --retry 2 --retry-delay 3 \
+                    --connect-timeout 20 --max-time 240 --proto '=https' --proto-redir '=https' \
+                    --output upstream.apk -- "$url"; then
+              if python - <<'PY'
+          import os, sys, zipfile
+          path = 'upstream.apk'
+          valid = os.path.getsize(path) > 10_000_000 and zipfile.is_zipfile(path)
+          sys.exit(0 if valid else 1)
+          PY
+              then
+                echo "Downloaded an APK container successfully."
+                fetched=true
+                break
+              fi
+              echo "Downloaded file is not a valid APK container."
+            else
+              echo "Download failed; trying next official source."
+            fi
+          done
+          if [[ "$fetched" != true ]]; then
+            echo "::error::All official Zona APK download endpoints failed."
+            exit 1
+          fi
       - name: Inspect official signature and version
         id: inspect
         shell: bash

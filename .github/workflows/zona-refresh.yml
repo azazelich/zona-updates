@@ -1,6 +1,10 @@
 name: Check upstream Zona and build NoVAST
 
 on:
+  push:
+    paths:
+      - 'zona_build.py'
+      - '.github/workflows/zona-refresh.yml'
   schedule:
     - cron: '37 5 * * *'
   workflow_dispatch:
@@ -97,9 +101,25 @@ jobs:
           print('Original Zona', name, 'versionCode', code)
           PY
           version="$(python -c "from zona_build import manifest_info; print(manifest_info('upstream.apk')['versionCode'])")"
-          if gh release view "zona-$version" >/dev/null 2>&1; then
-            echo 'already=true' >> "$GITHUB_OUTPUT"
-            echo 'Version already published.' >> "$GITHUB_STEP_SUMMARY"
+          tag="zona-$version"
+          sdk="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            mkdir -p previous-release
+            if gh release download "$tag" --pattern 'Zona_*_NoVAST.apk' --dir previous-release --clobber; then
+              previous="$(find previous-release -name '*.apk' -type f | head -1)"
+              if [[ -n "$previous" ]] &&
+                 "$sdk/apksigner" verify "$previous" &&
+                 "$sdk/zipalign" -c 4 "$previous" &&
+                 python -c "from zona_build import signing_certificate_digest, CUSTOM_SIGNER; assert signing_certificate_digest('$previous') == CUSTOM_SIGNER"; then
+                echo 'already=true' >> "$GITHUB_OUTPUT"
+                echo 'Existing release passed apksigner and zipalign; no replacement needed.' >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo 'already=false' >> "$GITHUB_OUTPUT"
+                echo 'Existing release FAILED installation preflight; rebuilding and replacing it.' >> "$GITHUB_STEP_SUMMARY"
+              fi
+            else
+              echo 'already=false' >> "$GITHUB_OUTPUT"
+            fi
           else
             echo 'already=false' >> "$GITHUB_OUTPUT"
           fi
@@ -143,9 +163,15 @@ jobs:
         run: |
           set -euo pipefail
           file="Zona_${VERSION_NAME}_NoVAST.apk"
-          gh release create "zona-${VERSION_CODE}" "$file" "${file}.json" \
-            --title "Zona ${VERSION_NAME} NoVAST (experimental)" \
-            --notes 'Derived from officially signed Zona; only the verified VAST patch was applied. Actual Android TV playback, ad suppression and in-app updater have not been runtime-tested.'
+          tag="zona-${VERSION_CODE}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$file" "${file}.json" --clobber
+            echo 'Replaced invalid existing APK with correctly ZIP-aligned build.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh release create "$tag" "$file" "${file}.json" \
+              --title "Zona ${VERSION_NAME} NoVAST (experimental)" \
+              --notes 'Based on officially signed Zona, locally patched and re-signed. Signature and ZIP alignment verified. Android TV runtime not yet tested.'
+          fi
           python - <<'PY'
           import json, os
           name = os.environ['VERSION_NAME']; code = int(os.environ['VERSION_CODE'])

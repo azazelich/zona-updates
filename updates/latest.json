@@ -1,0 +1,10 @@
+{
+  "package": "mobi.zona",
+  "appVersion": "3.0.76",
+  "versionCode": 1076,
+  "apkUrl": "https://github.com/azazelich/zona-updates/releases/download/zona-1076/Zona_3.0.76_NoVAST.apk",
+  "sha256": "6782bce863551effbcbeabd5bd8f4078fcb43fa88159190836e785b21e432b83",
+  "signingCertificateSha256": "1ae0e98bbf5c2206fa537593f15170d614419be68e7029c70cac7d18754ae8b1",
+  "experimental": true,
+  "requiresUserConfirmation": true
+}

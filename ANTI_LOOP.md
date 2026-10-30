@@ -47,3 +47,13 @@
 - **Результат на Android TV:** **ещё неизвестен**. Требуется проверить: исчезла ли реклама, начинается ли фильм, работает ли «Пропустить» если появляется, не возникает ли QR-заставка «установите последнюю Zona», играет ли следующее видео.
 - **Запрет:** не считать успех GitHub Actions подтверждением работоспособности. Не обновлять `updates/latest.json` и не включать автоматическую публикацию до фактического теста.
 
+
+## TV test 2026-10-30 — InstreamEmptyList partial success, update banner remains
+
+- Tested APK: `zona-1076-instream-bypass-experiment / Zona_3.0.76_InstreamEmptyList_TEST.apk`.
+- User confirmed: **regular advertising is gone**.
+- Remaining defect: screen "Для просмотра видео скачайте и установите последнюю версию Zona" with QR and `https://android.zona.pub`.
+- **Unknown:** whether the screen is from a video stream served by API, separate preroll/ad source, native integrity/version challenge, or an actual forced-update dialog. The text/domain is absent from literal strings and other non-large resources in original `zona5.apk` and FreeZona APK, indicating it is not stored plainly in either package; this does **not** distinguish remote playback from dynamically generated/encoded content.
+- Do not reapply an empty VAST, a no-media VAST, or undo the working instream emptyList bypass. Do not touch Order.isPaid/third-party native code without establishing relevance.
+- Pending: determine whether normal movie starts after this screen, and where the displayed frame comes from. No new runtime-proven fix as of this entry.
+

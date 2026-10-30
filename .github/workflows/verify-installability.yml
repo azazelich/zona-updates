@@ -1,0 +1,36 @@
+name: Diagnose Android installability
+
+on:
+  push:
+    paths:
+      - '.github/workflows/verify-installability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download signed release APK
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 180 \
+            'https://github.com/azazelich/zona-updates/releases/download/zona-1076/Zona_3.0.76_NoVAST.apk' \
+            -o Zona.apk
+          test "$(wc -c < Zona.apk)" -gt 10000000
+          sha256sum Zona.apk
+      - name: Inspect APK with Android SDK build tools
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/build-tools"
+          TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          echo "Build tools: $TOOLS"
+          "$TOOLS/apksigner" verify --verbose --print-certs Zona.apk
+          "$TOOLS/zipalign" -c -v 4 Zona.apk
+          "$TOOLS/aapt" dump badging Zona.apk | head -35
+      - name: Note remaining runtime-only checks
+        run: |
+          echo 'Android SDK checks finished. Device-specific signature conflict and runtime playback are NOT covered.' >> "$GITHUB_STEP_SUMMARY"

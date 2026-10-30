@@ -157,7 +157,7 @@ jobs:
           set -euo pipefail
           python zona_build.py upstream.apk --key signing.p12 --out "Zona_${VERSION_NAME}_NoVAST.apk"
       - name: Release signed APK and publish update manifest
-        if: steps.inspect.outputs.already == 'false' && steps.keys.outputs.ready == 'true'
+        if: steps.inspect.outputs.already == 'false' && steps.keys.outputs.ready == 'true' && vars.ZONA_ADS_RUNTIME_TEST_PASSED == 'true'
         env:
           VERSION_NAME: ${{ steps.inspect.outputs.version_name }}
           VERSION_CODE: ${{ steps.inspect.outputs.version_code }}

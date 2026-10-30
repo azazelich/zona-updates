@@ -1,0 +1,73 @@
+name: Test Zona 3.0.76 instream-ad bypass (experimental)
+on:
+  push:
+    paths:
+      - '.github/workflows/zona-instream-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ZONA_KEY_PASSWORD: ${{ secrets.ZONA_KEY_PASSWORD }}
+      KEY_B64: ${{ secrets.ZONA_SIGNING_P12_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install signing library
+        run: python -m pip install --no-cache-dir 'cryptography>=42,<47'
+      - name: Download verified original Android TV Zona 3.0.76
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --proto '=https' --proto-redir '=https' \
+            --max-time 180 https://zon.im/a -o original.apk
+          python - <<'PY'
+          from zona_build import manifest_info, signing_certificate_digest, OFFICIAL_SIGNER
+          x=manifest_info('original.apk')
+          assert x['package']=='mobi.zona' and str(x['versionName'])=='3.0.76'
+          assert int(x['versionCode'])==1076 and signing_certificate_digest('original.apk')==OFFICIAL_SIGNER
+          print('Verified genuine Zona 3.0.76 version 1076')
+          PY
+      - name: Patch instream gate only, sign and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZONA_KEY_PASSWORD" && test -n "$KEY_B64"
+          printf '%s' "$KEY_B64" | base64 -d > signing.p12
+          chmod 600 signing.p12
+          python zona_build.py original.apk --key signing.p12 \
+            --out Zona_3.0.76_InstreamEmptyList_TEST.apk --test-skip-instream
+          python - <<'PY'
+          import json
+          x=json.load(open('Zona_3.0.76_InstreamEmptyList_TEST.apk.json'))
+          assert x['mode']=='skip-instream-empty-list-UNVERIFIED'
+          assert x['modified']=='classes4.dex'
+          assert x['versionCode']==1076
+          print('Only classes4.dex modified; no VAST or subscription rewrites')
+          PY
+      - name: Publish prerelease for controlled TV test only
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=Zona_3.0.76_InstreamEmptyList_TEST.apk
+          tag=zona-1076-instream-bypass-experiment
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$name" "$name.json" --clobber
+          else
+            gh release create "$tag" "$name" "$name.json" \
+              --prerelease \
+              --title 'Zona 3.0.76 InstreamEmptyList — EXPERIMENTAL' \
+              --notes 'UNTESTED on Android TV: the adsBeforePlayback coroutine returns emptyList(), without touching VAST or the player. May still display ads or fail. Same signing certificate as earlier custom Zona. Not linked from updates/latest.json. Do not treat this prerelease as a known-working app.'
+          fi
+      - name: Delete key from ephemeral runner
+        if: always()
+        run: rm -f signing.p12 original.apk

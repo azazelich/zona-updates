@@ -47,13 +47,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Both URLs are documented by the official Zona Android website.
-          # Verify the developer's APK signature in the following step.
+          # This project patches Android TV Zona 3.x only.
+          # NEVER use the zona2.apk endpoint: it serves an incompatible 2.x build.
+          # Verify the developer's APK signature and supported major version below.
           urls=()
           if [[ -n "${CUSTOM_URL:-}" ]]; then
             urls+=("$CUSTOM_URL")
           fi
-          urls+=("https://apkr.upzona.net/zona2.apk" "https://zon.im/a")
+          urls+=("https://zon.im/a")
           fetched=false
           for url in "${urls[@]}"; do
             echo "Attempting official source: $url"
@@ -94,6 +95,7 @@ jobs:
           assert signing_certificate_digest('upstream.apk') == OFFICIAL_SIGNER, 'Official signature changed'
           name = str(info['versionName'])
           code = int(info['versionCode'])
+          assert name.startswith('3.'), 'This updater only handles Android TV Zona 3.x'
           assert re.fullmatch(r'\d+(?:\.\d+){1,4}', name), 'Unexpected version name'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               print('version_name=' + name, file=f)

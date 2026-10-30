@@ -218,7 +218,7 @@ def android_tool(name):
     raise ValueError(name + ' missing: install Android SDK build-tools before signing')
 
 
-def build(original, output, keyfile, password):
+def build(original, output, keyfile, password, restore_original=False):
     info = manifest_info(original)
     if info.get('package') != 'mobi.zona':
         raise ValueError('Unexpected package name')
@@ -242,7 +242,7 @@ def build(original, output, keyfile, password):
                 if name.startswith('META-INF/') and (name.upper() == 'META-INF/MANIFEST.MF' or name.upper().endswith(('.SF', '.RSA', '.DSA', '.EC')) or name.upper().split('/')[-1].startswith('SIG-')):
                     continue
                 raw = zin.read(name)
-                if name.startswith('classes') and name.endswith('.dex'):
+                if not restore_original and name.startswith('classes') and name.endswith('.dex'):
                     positions, first_string = method_location(raw)
                     if positions:
                         if len(positions) != 1 or first_string != '':
@@ -258,8 +258,8 @@ def build(original, output, keyfile, password):
                         patch_count += 1
                         patched = name
                 zout.writestr(item, raw)
-        if patch_count != 1:
-            raise ValueError('Expected exactly one ad method; found ' + str(patch_count))
+        if patch_count != (0 if restore_original else 1):
+            raise ValueError('Unexpected patch count ' + str(patch_count))
         alias = 'zona no-vast local test'
         cmd = ['jarsigner', '-keystore', str(keyfile), '-storetype', 'PKCS12',
                '-storepass:env', 'ZONA_KEY_PASSWORD', '-keypass:env', 'ZONA_KEY_PASSWORD',
@@ -282,9 +282,11 @@ def build(original, output, keyfile, password):
         if dest.testzip():
             raise ValueError('ZIP CRC mismatch')
         changed = [n for n in src.namelist() if n not in ('META-INF/CERT.RSA', 'META-INF/CERT.SF', 'META-INF/MANIFEST.MF') and src.read(n) != dest.read(n)]
-        if changed != [patched]:
+        expected_changes = [] if restore_original else [patched]
+        if changed != expected_changes:
             raise ValueError('Unexpected modifications: ' + repr(changed))
     return dict(package=info['package'], versionCode=info['versionCode'], versionName=info['versionName'],
+                mode='original-recovery-with-ads' if restore_original else 'experimental-no-vast',
                 modified=patched, sha256=hashlib.sha256(Path(output).read_bytes()).hexdigest(),
                 signingCertificate=CUSTOM_SIGNER, checks='v1+v2 signature via apksigner, zipalign, ZIP, code-diff, package OK',
                 runtimeTested=False, updateClientWired=False)
@@ -295,11 +297,12 @@ def main():
     ap.add_argument('original')
     ap.add_argument('--key', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--restore-original', action='store_true', help='Sign unmodified original app code to recover playback without clearing data')
     args = ap.parse_args()
     password = os.getenv('ZONA_KEY_PASSWORD')
     if not password:
         ap.error('Missing ZONA_KEY_PASSWORD')
-    results = build(args.original, args.out, args.key, password)
+    results = build(args.original, args.out, args.key, password, restore_original=args.restore_original)
     Path(args.out + '.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(results, ensure_ascii=False, indent=2))
 

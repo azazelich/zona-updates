@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 OFFICIAL_SIGNER = 'e85c1eb707f4c7987e51886a8b8eee159c4256aabfcca179626cd04aac4aa989'
 CUSTOM_SIGNER = '1ae0e98bbf5c2206fa537593f15170d614419be68e7029c70cac7d18754ae8b1'
 AD_METHOD = ('Lmobi/zona/data/model/response/VastResponse;', 'getVast', '()Ljava/lang/String;')
+INSTREAM_ADS_METHOD = ('Ldg/i;', 'a', '(Ldg/f;Lzg/k;Lkotlin/coroutines/jvm/internal/ContinuationImpl;)Ljava/lang/Object;')
 EXPECTED_CODE = bytes.fromhex('5410414c1100')
 NEW_CODE = bytes.fromhex('1a0000001100')
 
@@ -36,7 +37,7 @@ def uleb(data, pos):
         shift += 7
 
 
-def method_location(data):
+def method_location(data, target=AD_METHOD):
     u16 = lambda p: struct.unpack_from('<H', data, p)[0]
     u32 = lambda p: struct.unpack_from('<I', data, p)[0]
     n, off = struct.unpack_from('<II', data, 56)
@@ -80,7 +81,7 @@ def method_location(data):
             mid += delta
             _, p = uleb(data, p)
             co, p = uleb(data, p)
-            if co and methods[mid] == AD_METHOD:
+            if co and methods[mid] == target:
                 regs, ins, outs, tries, debug, size = struct.unpack_from('<HHHHII', data, co)
                 code = data[co + 16:co + 16 + size * 2]
                 found.append((co, size, regs, code))
@@ -268,8 +269,8 @@ def patch_valid_no_media_vast(raw):
     struct.pack_into('<I', rewritten, 8, zlib.adler32(rewritten[12:]) & 0xffffffff)
     return bytes(rewritten)
 
-def build(original, output, keyfile, password, restore_original=False, test_no_media_vast=False):
-    if restore_original and test_no_media_vast:
+def build(original, output, keyfile, password, restore_original=False, test_no_media_vast=False, test_skip_instream=False):
+    if sum((restore_original, test_no_media_vast, test_skip_instream)) > 1:
         raise ValueError('Choose one mode')
     info = manifest_info(original)
     if info.get('package') != 'mobi.zona':
@@ -294,7 +295,33 @@ def build(original, output, keyfile, password, restore_original=False, test_no_m
                 if name.startswith('META-INF/') and (name.upper() == 'META-INF/MANIFEST.MF' or name.upper().endswith(('.SF', '.RSA', '.DSA', '.EC')) or name.upper().split('/')[-1].startswith('SIG-')):
                     continue
                 raw = zin.read(name)
-                if test_no_media_vast and name.startswith('classes') and name.endswith('.dex'):
+                if test_skip_instream and name.startswith('classes') and name.endswith('.dex'):
+                    # Original, confirmed 3.0.76 adsBeforePlayback coroutine; bypass
+                    # the ad phase by returning a non-null, empty List to the caller.
+                    # Do NOT replace VastResponse data, change player logic, or
+                    # alter subscription checks. This is an experimental runtime test.
+                    matches, _ = method_location(raw, INSTREAM_ADS_METHOD)
+                    if matches:
+                        if len(matches) != 1:
+                            raise ValueError('Ambiguous instream gate')
+                        offset, size, regs, bytecode = matches[0]
+                        try_count = struct.unpack_from('<H', raw, offset + 6)[0]
+                        if (info.get('versionCode') != 1076 or size != 144
+                                or regs < 1 or try_count != 0
+                                or bytecode[:10] != bytes.fromhex('2070331a380011000770')
+                                or bytecode[276:282] != bytes.fromhex('710097690000')):
+                            raise ValueError('Instream method changed; patch refused')
+                        # Reuse the *existing* emptyList() call from the very same
+                        # method. This call returns a List (rather than a VAST string).
+                        first_five_units = bytecode[276:282] + bytes.fromhex('0c001100')
+                        edited = bytearray(raw)
+                        edited[offset + 16:offset + 26] = first_five_units
+                        edited[12:32] = hashlib.sha1(edited[32:]).digest()
+                        struct.pack_into('<I', edited, 8, zlib.adler32(edited[12:]) & 0xffffffff)
+                        raw = bytes(edited)
+                        patched = name
+                        patch_count += 1
+                elif test_no_media_vast and name.startswith('classes') and name.endswith('.dex'):
                     replacement = patch_valid_no_media_vast(raw)
                     if replacement is not None:
                         raw = replacement
@@ -344,7 +371,7 @@ def build(original, output, keyfile, password, restore_original=False, test_no_m
         if changed != expected_changes:
             raise ValueError('Unexpected modifications: ' + repr(changed))
     return dict(package=info['package'], versionCode=info['versionCode'], versionName=info['versionName'],
-                mode='original-recovery-with-ads' if restore_original else ('no-media-vast-test-UNVERIFIED' if test_no_media_vast else 'broken-empty-string-no-vast'),
+                mode='original-recovery-with-ads' if restore_original else ('skip-instream-empty-list-UNVERIFIED' if test_skip_instream else ('no-media-vast-test-UNVERIFIED' if test_no_media_vast else 'broken-empty-string-no-vast')),
                 modified=patched, sha256=hashlib.sha256(Path(output).read_bytes()).hexdigest(),
                 signingCertificate=CUSTOM_SIGNER, checks='v1+v2 signature via apksigner, zipalign, ZIP, code-diff, package OK',
                 runtimeTested=False, updateClientWired=False)
@@ -357,11 +384,12 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--restore-original', action='store_true', help='Sign unmodified original app code to recover playback without clearing data')
     ap.add_argument('--test-no-media-vast', action='store_true', help='Experimental proper no-media VAST XML instead of broken empty response; needs real TV test')
+    ap.add_argument('--test-skip-instream', action='store_true', help='Experimental bypass of adsBeforePlayback coroutine via emptyList; needs TV test')
     args = ap.parse_args()
     password = os.getenv('ZONA_KEY_PASSWORD')
     if not password:
         ap.error('Missing ZONA_KEY_PASSWORD')
-    results = build(args.original, args.out, args.key, password, restore_original=args.restore_original, test_no_media_vast=args.test_no_media_vast)
+    results = build(args.original, args.out, args.key, password, restore_original=args.restore_original, test_no_media_vast=args.test_no_media_vast, test_skip_instream=args.test_skip_instream)
     Path(args.out + '.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(results, ensure_ascii=False, indent=2))
 

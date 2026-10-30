@@ -1,0 +1,64 @@
+name: Experimental no-media VAST candidate 3.0.76
+on:
+  push:
+    paths:
+      - '.github/workflows/zona-test-vast.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ZONA_KEY_PASSWORD: ${{ secrets.ZONA_KEY_PASSWORD }}
+      KEY_B64: ${{ secrets.ZONA_SIGNING_P12_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install signing library
+        run: python -m pip install --no-cache-dir 'cryptography>=42,<47'
+      - name: Download official Android TV Zona
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --proto '=https' --proto-redir '=https' \
+            --max-time 180 https://zon.im/a -o original.apk
+          python - <<'PY'
+          from zona_build import manifest_info, signing_certificate_digest, OFFICIAL_SIGNER
+          x=manifest_info('original.apk')
+          assert x['package']=='mobi.zona'
+          assert x['versionName']=='3.0.76' and x['versionCode']==1076, x
+          assert signing_certificate_digest('original.apk')==OFFICIAL_SIGNER
+          PY
+      - name: Apply valid non-playable VAST and sign using existing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZONA_KEY_PASSWORD" && test -n "$KEY_B64"
+          printf '%s' "$KEY_B64" | base64 -d > signing.p12
+          chmod 600 signing.p12
+          python zona_build.py original.apk --key signing.p12 \
+            --out Zona_3.0.76_VAST_NoMedia_TEST.apk --test-no-media-vast
+      - name: Publish UNTESTED candidate, not the latest stable update
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=Zona_3.0.76_VAST_NoMedia_TEST.apk
+          tag=zona-1076-no-media-vast-experiment
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$file" "$file.json" --clobber
+          else
+            gh release create "$tag" "$file" "$file.json" \
+              --title 'Zona 3.0.76 valid no-media VAST — EXPERIMENTAL' \
+              --notes 'UNTESTED on Android TV. Replaces the broken empty-string VAST with syntactically valid non-playable VAST XML, based on FreeZona approach. This may STILL HANG. Do not use until tested. Same signing key as recovery. This release does not update updates/latest.json.'
+          fi
+      - name: Remove local private key
+        if: always()
+        run: rm -f signing.p12 original.apk

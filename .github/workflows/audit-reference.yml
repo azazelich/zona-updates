@@ -1,0 +1,46 @@
+name: Audit original Zona against FreeZona (read-only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install parsing dependency
+        run: python -m pip install 'cryptography>=42,<47'
+      - name: Download known APKs without executing either
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --max-time 180 --proto '=https' --proto-redir '=https' 'https://zon.im/a' -o official.apk
+          curl --fail --location --retry 2 --max-time 180 --proto '=https' --proto-redir '=https' 'https://github.com/julay123/mobi.zona/releases/download/1076/FreeZona_3.0.76_ultra_aligned.apk' -o reference.apk
+          sha256sum official.apk reference.apk
+      - name: Compare exact APK identities, permissions and selected methods
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/audit_apks.py official.apk reference.apk --out audit-report.json
+          python - <<'PY'
+          import json
+          x=json.load(open('audit-report.json'))
+          print('Permissions added in FreeZona:', x['added_permissions'])
+          print('Permissions removed:', x['removed_permissions'])
+          print('Native libraries removed:', len(x['removed_native_libraries']))
+          print('Method fingerprints written, NOT decompiled implementation.')
+          PY
+      - name: Save read-only audit report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-report-3.0.76
+          path: audit-report.json
+          retention-days: 7
+      - name: Remove downloaded APKs
+        if: always()
+        run: rm -f official.apk reference.apk

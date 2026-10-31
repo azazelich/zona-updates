@@ -4,10 +4,12 @@ import argparse
 import hashlib
 import json
 import struct
+import sys
 import zipfile
 from pathlib import Path
 
 # Reuses the verified DEX scanner already in the project's build script.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zona_build import method_location, manifest_info
 
 TARGETS = {

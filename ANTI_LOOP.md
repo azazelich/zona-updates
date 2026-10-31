@@ -123,7 +123,7 @@
 ## TV control: Recovery fails; official works on ANOTHER TV box (2026-10-31)
 
 - User confirmed `Zona_3.0.76_Recovery_WITH_ADS.apk` installed on the test box: normal advertising appears, but movie stream fails and the «скачай зону» / update QR screen appears.
-- **Additional user observation:** the **official Zona works and plays movies on a different Android TV box**. Internet access is working. This makes a general service outage less plausible, but it does **not** isolate signature because **device, installation, and potentially network differ**.
+- **Historical observation at that time:** official Zona worked on another TV box. **Later owner clarified that the official Zona also worked on the same test TV box before modifications**. Therefore a faulty box is not a viable explanation; the exact difference causing QR in the modified APK is still unknown.
 - Recovery uses original app entry bytes including playback code (except signing/ZIP metadata), yet differs from the publisher original in signing certificate. A signature/integrity check is a candidate; *not proven*. Other candidates: device environment, player/codec, API route/source, region, local cached state.
 - Discriminating next test, only with informed consent about local-data loss: official original on the *same* failing box, *same* movie and source, ideally *same* Wi-Fi. The original APK cannot replace our modified APK in-place due to certificate mismatch. Do not uninstall anything remotely or present this as lossless.
 - If the user wants to avoid reinstalling, request a focused logcat of playback failure and inspect HTTP/ExoPlayer errors and integrity failures. Do not rebuild random VAST patches, modify third-party FreeZona payments, or unblock update feed.
@@ -148,11 +148,17 @@
 - Тестовые APK и установленное `mobi.zona` можно удалить после сохранения пользовательских данных и контрольного сравнения; удаление приложения может стереть локальную историю/настройки. Отдельные загрузки APK удалять можно без влияния на установленное приложение.
 - **Новая наша сборка не выпущена**, потому что не установлена причинная связь; `updates/latest.json` остаётся заблокированным. Это контрольная установка референсного стороннего APK, а не публикация нашего патча.
 
+## Дополнительное подтверждение от владельца — 2026-10-31
+
+- **Официальная Zona до модификации работала на том же тестовом ТВ-боксе**, запускала фильмы. Пользователь решил переделать APK **только ради удаления рекламы**, не из-за неисправности устройства.
+- **FreeZona 3.0.76 работает на том же боксе:** воспроизведение, звук, отсутствие рекламы подтверждены. Переустановка нашей Recovery с исходной логикой плеера, но иной подписью приводит к QR/отказу потока. **Это доказывает, что сам бокс не является причиной**, но ещё не выделяет единственный программный фактор: подпись/сеть приложения/cookie/другие изменения различаются одновременно.
+- **Не просить повторно доказывать исправность бокса** или делать ненужное переустановочное тестирование оригинальной Zona. Следующая задача — семантический анализ отличий FreeZona, прежде всего формирования stream Cookie и нативных проверок, без изменений оплаты и слепого переноса.
+
 ## 2026-10-31 — FreeZona — подтверждённый успешный запуск на тестовом боксе
 
 **Прямое сообщение владельца после установки `FreeZona_3.0.76_ultra_aligned.apk`:**
 - **УСПЕХ:** видеопотоки воспроизводятся; фильмы запускаются; звук есть; обычной рекламы нет.
-- **Уточнение:** бокс не «проблемный» аппаратно — он выделен **для тестирования**. Ранее на этом же боксе наши `NoVAST`, `VAST_NoMedia`, `InstreamEmptyList` и `Recovery_WITH_ADS` показывали зависание/QR или не запускали фильм. Ранее пользователь подтвердил также работу официальной Zona на другом боксе; оба подключены к одному роутеру.
+- **Уточнение:** это исправный бокс, выделенный **для тестирования**. Пользователь прямо подтвердил, что **официальная Zona воспроизводила фильмы на нём самом до переделки**; её решили модифицировать исключительно из-за надоевшей рекламы. На том же боксе наши `NoVAST`, `VAST_NoMedia`, `InstreamEmptyList` и `Recovery_WITH_ADS` показывали зависание/QR или не запускали фильм. FreeZona 3.0.76 на нём запускает фильмы со звуком и без рекламы. Официальная Zona также работала на другом боксе; оба подключены к одному роутеру.
 - **НЕ ПРОВЕРЕНО / не сообщалось:** регистрация/вход в аккаунт, восстановление избранного, автообновление FreeZona на этом боксе, конец фильма/переход к следующей серии, стабильность после перезапуска, безопасность сторонней модификации. Нельзя отмечать их как УСПЕХ.
 - **Вывод с высокой уверенностью:** устройство и общая способность воспроизводить видеопотоки в текущей сети работают; разница результатов указывает на **отличия между сборками и их сетевым поведением**, а не на неработоспособность бокса. Какая именно правка FreeZona определяет успешный поток, **ещё не доказано**.
 - **Новый приоритет:** считать FreeZona **функциональным контрольным эталоном** на том же боксе; адресно сравнивать формирование stream Cookie (`Lvd/d.b`, `Lid/a.a`, `zona.Cookie`), вызовы `CppUtil`/нативного кода и настоящий путь запроса потока. Не переносить проверки оплаты/подписки и недоверенный мод целиком; не выпускать очередной APK по догадке.

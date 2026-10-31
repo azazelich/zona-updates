@@ -1,5 +1,9 @@
 name: Audit original Zona against FreeZona (read-only)
 on:
+  push:
+    paths:
+      - 'tools/audit_apks.py'
+      - '.github/workflows/audit-reference.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -94,3 +94,12 @@
 - Recovery uses original app entry bytes including playback code (except signing/ZIP metadata), yet differs from the publisher original in signing certificate. A signature/integrity check is a candidate; *not proven*. Other candidates: device environment, player/codec, API route/source, region, local cached state.
 - Discriminating next test, only with informed consent about local-data loss: official original on the *same* failing box, *same* movie and source, ideally *same* Wi-Fi. The original APK cannot replace our modified APK in-place due to certificate mismatch. Do not uninstall anything remotely or present this as lossless.
 - If the user wants to avoid reinstalling, request a focused logcat of playback failure and inspect HTTP/ExoPlayer errors and integrity failures. Do not rebuild random VAST patches, modify third-party FreeZona payments, or unblock update feed.
+
+## 2026-10-31 — используем FreeZona как образец, найдена вероятная точка серверного отказа
+
+- Повторно распакованы официальная `zona5.apk` и приложенная `FreeZona_3.0.76_ultra_aligned.apk`, сопоставлены индексы классов/методов и DEX вызовы.
+- В `Lvd/d.b` при формировании **HTTP Cookie** (оба метода по 202 code units) оригинал вызывает `Lid/a.a(J,Object):String`, а FreeZona — `zona.Cookie(J,Context):String`. Это первая конкретная модификация непосредственно в видеозапросе. Она не доказывает, что QR вызывается подписью или cookie, но даёт проверяемую гипотезу для дальнейшей трассировки.
+- FreeZona также действительно заменяет `CppUtil.checkTimeNative[2]` на `zona.checkTimeNative123`, исключает загрузку `libzona.so` и исключает вызов `eso`.
+- Hex-JSON конфигурация FreeZona вставлена в `Lkd/g.a` инструкцией `const-string v23` непосредственно перед `return-object v0`. Здесь она не используется, поэтому нельзя утверждать, что `stream` адреса реально переключаются на основании только этого литерала.
+- Подробная запись со ссылками методов в `STATIC_DIFF.md`. **Новый APK не создавался, release feed заблокирован**.
+- Не повторять патчи VAST, не копировать целиком FreeZona и её обходы `LPh/d` проверок оплаты. Следующий источник доказательств — ошибки/статусы запроса видеопотока на проблемном боксе или тест официальной Zona там же, при осознанном согласии на переустановку/потерю локальных данных.

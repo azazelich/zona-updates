@@ -86,3 +86,11 @@
 - Не записывать это наблюдение ни как доказанный регресс `InstreamEmptyList`, ни как успешный тест `Recovery_WITH_ADS`, пока не выяснена установленная сборка.
 - Новые APK по этой информации не создавать. Следующий диагностический контроль: уточнить имя установленного APK; затем сравнить на **одном фильме/источнике и устройстве** восстановительную `Recovery_WITH_ADS` (исходная реклама и воспроизведение, но наш сертификат) и тестовую `InstreamEmptyList`. Отдельно фиксировать, появляется ли QR, проходит ли рекламный блок и запускается ли видео.
 - `updates/latest.json` остаётся заблокированным до подтверждённой рабочей NoAds-сборки.
+
+## TV control: Recovery fails; official works on ANOTHER TV box (2026-10-31)
+
+- User confirmed `Zona_3.0.76_Recovery_WITH_ADS.apk` installed on the test box: normal advertising appears, but movie stream fails and the «скачай зону» / update QR screen appears.
+- **Additional user observation:** the **official Zona works and plays movies on a different Android TV box**. Internet access is working. This makes a general service outage less plausible, but it does **not** isolate signature because **device, installation, and potentially network differ**.
+- Recovery uses original app entry bytes including playback code (except signing/ZIP metadata), yet differs from the publisher original in signing certificate. A signature/integrity check is a candidate; *not proven*. Other candidates: device environment, player/codec, API route/source, region, local cached state.
+- Discriminating next test, only with informed consent about local-data loss: official original on the *same* failing box, *same* movie and source, ideally *same* Wi-Fi. The original APK cannot replace our modified APK in-place due to certificate mismatch. Do not uninstall anything remotely or present this as lossless.
+- If the user wants to avoid reinstalling, request a focused logcat of playback failure and inspect HTTP/ExoPlayer errors and integrity failures. Do not rebuild random VAST patches, modify third-party FreeZona payments, or unblock update feed.
